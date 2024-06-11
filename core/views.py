@@ -1,9 +1,10 @@
-from django.shortcuts import render, redirect
-from .models import Document
+from django.shortcuts import render, get_object_or_404, redirect
+from .models import Document, DockSignGroup
 from django.contrib.auth.decorators import login_required
-from .forms import DocumentForm, SignDocumentForm
+from .forms import DocumentForm, SignDocumentForm, AddUserForm, SignDocumentForm2, DockSignGroupForm
 from .utils import bs12
 from django.contrib.auth.models import User
+from django.contrib import messages
 
 @login_required
 def home(request):
@@ -70,3 +71,68 @@ def sign_document(request):
         initial_data = {'documents': [document.id for document in documents]}
         form = SignDocumentForm(initial=initial_data)
     return render(request, 'backend/sign_document.html', {'form': form, 'documents': documents})
+
+@login_required
+def docksigngroup_detail(request, pk):
+    group = get_object_or_404(DockSignGroup, pk=pk)
+    add_user_form = AddUserForm()
+    sign_form = SignDocumentForm2(instance=group)
+
+    if request.method == 'POST':
+        if 'add_user' in request.POST:
+            add_user_form = AddUserForm(request.POST)
+            if add_user_form.is_valid():
+                username = add_user_form.cleaned_data['username']
+                try:
+                    new_user = User.objects.get(username=username)
+                    if group.add_user(request.user, new_user):
+                        messages.success(request, f"User {username} added to the group.")
+                    else:
+                        messages.error(request, "You do not have permission to add users to this group.")
+                except User.DoesNotExist:
+                    add_user_form.add_error('username', 'User does not exist')
+            else:
+                messages.error(request, "Error adding user.")
+        elif 'sign_document' in request.POST:
+            sign_form = SignDocumentForm2(request.POST, instance=group)
+            if sign_form.is_valid():
+                group.sign_document(request.user)
+                messages.success(request, "Document signed successfully.")
+            else:
+                messages.error(request, "Error signing document.")
+
+        return redirect(docksigngroup_detail, pk=group.pk)
+
+    context = {
+        'group': group,
+        'add_user_form': add_user_form,
+        'sign_form': sign_form,
+    }
+    return render(request, 'backend/docksigngroup_detail.html', context)
+
+def create_docksigngroup(request):
+    if request.method == 'POST':
+        form = DockSignGroupForm(request.POST)
+        if form.is_valid():
+            docksigngroup = form.save(commit=False)
+            docksigngroup.created_by = request.user  # Assign the current user as the creator
+            docksigngroup.save()
+            form.save_m2m()  # Save the many-to-many relationships
+            return redirect(docksigngroup_detail, pk=docksigngroup.pk)  # Redirect to detail view
+    else:
+        form = DockSignGroupForm()
+    
+    context = {
+        'form': form,
+    }
+    return render(request, 'backend/create_docksigngroup.html', context)
+
+@login_required
+def user_docksigngroups(request):
+    # Fetch all DockSignGroup instances where the current user is a member
+    groups = DockSignGroup.objects.filter(users=request.user)
+    
+    context = {
+        'groups': groups,
+    }
+    return render(request, 'backend/user_docksigngroups.html', context)
